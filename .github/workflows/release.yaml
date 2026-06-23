@@ -1,0 +1,80 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  REPOSITORY: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: self-hosted-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine version and tags
+        id: version
+        run: |
+          set -euo pipefail
+          IMAGE="$REGISTRY/${REPOSITORY,,}"
+          LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
+            | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+          LATEST=${LATEST:-$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')}
+          LATEST=${LATEST:-0.0.0}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
+
+          MSG=$(git log -1 --pretty=%B)
+          if echo "$MSG" | grep -qiE 'bump major'; then
+            MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0
+          elif echo "$MSG" | grep -qiE 'bump minor'; then
+            MINOR=$((MINOR + 1)); PATCH=0
+          elif echo "$MSG" | grep -qiE 'bump patch'; then
+            PATCH=$((PATCH + 1))
+          else
+            echo "No bump keyword in commit; pushing :latest only"
+            echo "tags=$IMAGE:latest" >> "$GITHUB_OUTPUT"
+            echo "version=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VER="$MAJOR.$MINOR.$PATCH"
+          echo "Bumping $LATEST -> $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<EOF"
+            echo "$IMAGE:$VER"
+            echo "$IMAGE:latest"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: ${{ steps.version.outputs.tags }}
+
+      - name: Tag release
+        if: steps.version.outputs.version != ''
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
