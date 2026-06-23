@@ -94,3 +94,17 @@ def test_cleanup_idempotent(tmp_path: Path) -> None:
     handler.resolve(str(tmp_path / "a.md"))
     handler.cleanup()
     handler.cleanup()
+
+
+def test_parse_subdir_url() -> None:
+    """GitHub/GitLab tree|blob URLs parse into (clone_url, ref, subpath); others return None."""
+    h = InputHandler()
+    assert h._parse_subdir_url(
+        "https://github.com/anthropics/skills/tree/main/skills/frontend-design"
+    ) == ("https://github.com/anthropics/skills.git", "main", "skills/frontend-design")
+    assert h._parse_subdir_url(
+        "https://github.com/o/r/blob/v1.2/dir/SKILL.md"
+    ) == ("https://github.com/o/r.git", "v1.2", "dir/SKILL.md")
+    # plain repo URL and non-git host are not subdir URLs
+    assert h._parse_subdir_url("https://github.com/anthropics/skills") is None
+    assert h._parse_subdir_url("https://example.com/a/b/tree/main/x") is None

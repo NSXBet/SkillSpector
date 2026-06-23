@@ -69,6 +69,9 @@ class InputHandler:
         """
         input_path = input_path.strip()
 
+        subdir = self._parse_subdir_url(input_path)
+        if subdir:
+            return self._clone_git_subdir(*subdir), "git"
         if self._is_git_url(input_path):
             return self._clone_git(input_path), "git"
         if self._is_file_url(input_path):
@@ -102,6 +105,40 @@ class InputHandler:
             self._temp_dir = Path(tempfile.mkdtemp(prefix="skillspector_"))
         return self._temp_dir
 
+    def _parse_subdir_url(self, path: str) -> tuple[str, str, str] | None:
+        """Parse a github/gitlab tree|blob subdir URL into (clone_url, ref, subpath).
+
+        e.g. https://github.com/owner/repo/tree/main/skills/foo
+        -> ("https://github.com/owner/repo.git", "main", "skills/foo")
+        Returns None if the URL is not a recognized subdir URL.
+        """
+        if not path.startswith(("http://", "https://")):
+            return None
+        parsed = urlparse(path)
+        git_hosts = ["github.com", "gitlab.com", "bitbucket.org"]
+        if not any(host in parsed.netloc for host in git_hosts):
+            return None
+        parts = parsed.path.strip("/").split("/")
+        # owner / repo / (tree|blob) / ref / subpath...
+        if len(parts) < 5 or parts[2] not in ("tree", "blob"):
+            return None
+        owner, repo, _, ref = parts[0], parts[1], parts[2], parts[3]
+        subpath = "/".join(parts[4:])
+        clone_url = f"https://{parsed.netloc}/{owner}/{repo}.git"
+        return clone_url, ref, subpath
+
+    def _clone_git_subdir(self, url: str, ref: str, subpath: str) -> Path:
+        """Clone repo at ref and return the subpath within it (file or directory)."""
+        clone_dir = self._clone_git(url, ref)
+        target = (clone_dir / subpath).resolve()
+        if not str(target).startswith(str(clone_dir.resolve())):
+            raise ValueError(f"Invalid subpath in URL: {subpath}")
+        if not target.exists():
+            raise ValueError(f"Path '{subpath}' not found in repository {url}")
+        if target.is_file():
+            return self._wrap_single_file(target)
+        return target
+
     def _is_git_url(self, path: str) -> bool:
         """Check if path is a Git repository URL."""
         if not path.startswith(("http://", "https://", "git@")):
@@ -122,13 +159,18 @@ class InputHandler:
             return False
         return not self._is_git_url(path)
 
-    def _clone_git(self, url: str) -> Path:
+    def _clone_git(self, url: str, ref: str | None = None) -> Path:
         """Clone a Git repository to a temporary directory."""
         temp_dir = self._get_temp_dir()
         clone_dir = temp_dir / "repo"
+        # ponytail: --branch handles branches/tags only; SHA refs fall back to full clone if needed
+        cmd = ["git", "clone", "--depth", "1"]
+        if ref:
+            cmd += ["--branch", ref]
+        cmd += [url, str(clone_dir)]
         try:
             subprocess.run(
-                ["git", "clone", "--depth", "1", url, str(clone_dir)],
+                cmd,
                 check=True,
                 capture_output=True,
                 timeout=60,
