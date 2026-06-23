@@ -27,7 +27,7 @@ jobs:
           set -euo pipefail
           IMAGE="$REGISTRY/${REPOSITORY,,}"
           LATEST=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' \
-            | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1)
+            | sed 's/^v//' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
           LATEST=${LATEST:-$(grep -m1 '^version' pyproject.toml | sed 's/.*"\(.*\)".*/\1/')}
           LATEST=${LATEST:-0.0.0}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST"
