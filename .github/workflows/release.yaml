@@ -53,7 +53,9 @@ jobs:
 
       - name: Build and push
         run: |
-          docker buildx build --platform linux/amd64 --push \
+          docker run --privileged --rm tonistiigi/binfmt --install arm64
+          docker buildx create --use --name multiarch --driver docker-container
+          docker buildx build --platform linux/amd64,linux/arm64 --push \
             $(echo "${{ steps.version.outputs.tags }}" | tr ',' '\n' | sed 's/^/--tag /' | tr '\n' ' ') \
             .
 
